@@ -144,9 +144,11 @@ async def choose_cb(client, cb):
         elapsed = asyncio.get_event_loop().time() - start
         speed = current / elapsed if elapsed>0 else 0
         eta = (total_ - current) / speed if speed>0 else 0
-        text = f"Downloading {human_readable_size(current)}/{human_readable_size(total_)}
-{progress_bar(current, total_)}
-ETA: {int(eta)}s"
+        text = (
+    f"Downloading {human_readable_size(current)}/{human_readable_size(total_)}\n"
+    f"{progress_bar(current, total_)}\n"
+    f"ETA: {int(eta)}s"
+)
         try:
             await dl_msg.edit_text(text)
         except Exception:
