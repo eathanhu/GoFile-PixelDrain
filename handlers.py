@@ -28,16 +28,16 @@ def settings_keyboard_for_user(user_id: int):
     return kb
 
 
-@Client.on_message(filters.command('start'))
+@Client.on_message(filters.command("start"))
 async def start_handler(client, message):
     text = (
-        "Hi! I can upload files to GoFile or Pixeldrain.
-
-"
-        "Supported: GoFile (account token optional), Pixeldrain (API key optional).
-"
-        "Use /settings to add your API token for a smoother upload experience.")
-    await message.reply_text(text)
+        "Hi! I can upload files to <b>GoFile</b> or <b>Pixeldrain</b>.\n\n"
+        "Supported:\n"
+        "• GoFile (account token optional)\n"
+        "• Pixeldrain (API key optional)\n\n"
+        "Use <code>/settings</code> to add your API token for a smoother upload experience."
+    )
+    await message.reply_text(text, disable_web_page_preview=True)
 
 
 @Client.on_message(filters.command('help'))
