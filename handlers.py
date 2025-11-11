@@ -82,7 +82,7 @@ async def callbacks(client, cb):
     await cb.answer()
 
 
-@Client.on_message(filters.text & ~filters.command)
+@Client.on_message(filters.text & ~filters.command())
 async def text_handler(client, message):
     uid = message.from_user.id
     if uid in pending_set:
