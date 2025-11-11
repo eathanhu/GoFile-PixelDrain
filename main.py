@@ -1,6 +1,6 @@
 from pyrogram import Client
-from .config import API_ID, API_HASH, BOT_TOKEN
-from . import handlers  # registers handlers on import
+from config import API_ID, API_HASH, BOT_TOKEN
+from import handlers  # registers handlers on import
 
 
 def run():
