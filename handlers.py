@@ -167,18 +167,22 @@ async def choose_cb(client, cb):
                 res = await pixeldrain_upload(session, temp_path, filename, user_doc.get('pixeldrain_key'))
                 fid = res.get('id') or res.get('file')
                 url = f'https://pixeldrain.com/u/{fid}' if fid else str(res)
-                await upl_msg.edit_text(f'Uploaded to Pixeldrain
-File: {filename}
-Size: {human_readable_size(total)}
-Link: {url}')
+                await upl_msg.edit_text(
+                    f"Uploaded to Pixeldrain\n"
+                    f"File: {filename}\n"
+                    f"Size: {human_readable_size(total)}\n"
+                    f"Link: {url}"
+            )
             else:
                 res = await gofile_upload(session, temp_path, filename, user_doc.get('gofile_token'))
                 data = res.get('data', {})
                 downloadPage = data.get('downloadPage') or data.get('directLink')
-                await upl_msg.edit_text(f'Uploaded to GoFile
-File: {filename}
-Size: {human_readable_size(total)}
-Link: {downloadPage}')
+                await upl_msg.edit_text(
+                    f"Uploaded to GoFile\n"
+                    f"File: {filename}\n"
+                    f"Size: {human_readable_size(total)}\n"
+                    f"Link: {download_page}"
+                )
         except Exception as e:
             await upl_msg.edit_text(f'Upload failed: {e}')
 
