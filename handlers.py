@@ -82,7 +82,7 @@ async def callbacks(client, cb):
     await cb.answer()
 
 
-@Client.on_message(filters.text & ~filters.command())
+@Client.on_message(filters.text & ~filters.regex(r'^/'))
 async def text_handler(client, message):
     uid = message.from_user.id
     if uid in pending_set:
@@ -100,6 +100,7 @@ async def text_handler(client, message):
             await message.reply_text('Pixeldrain key saved.', reply_markup=settings_keyboard_for_user(uid))
         pending_set.pop(uid, None)
         return
+
 
 
 @Client.on_message(filters.document | filters.video | filters.audio | filters.photo)
