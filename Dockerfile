@@ -1,26 +1,25 @@
-FROM python:3.11-slim
+# Use the mirror-leech base image provided by the project author
+FROM anasty17/mltb:latest
 
-ENV PYTHONUNBUFFERED=1
-# avoid interactive prompts during apt installs
-ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /usr/src/app
 
-WORKDIR /app
+# ensure directory permissions (the original file had this)
+RUN chmod 777 /usr/src/app || true
 
-COPY requirements.txt /app/requirements.txt
+# create and use venv (same approach as original)
+RUN python3 -m venv mltbenv
 
-# Install chrony for time sync, tzdata (noninteractive), and ca-certificates for HTTPS
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      tzdata \
-      chrony \
-      ca-certificates \
- && pip install --no-cache-dir -r /app/requirements.txt \
- && rm -rf /var/lib/apt/lists/*
+# copy only requirements first to use layer caching
+COPY requirements.txt /usr/src/app/requirements.txt
 
-COPY . /app
+# install required packages into venv
+RUN mltbenv/bin/pip install --no-cache-dir -r /usr/src/app/requirements.txt
 
-# Ensure start.sh is executable
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# copy the rest of the project
+COPY . /usr/src/app
 
-CMD ["/app/start.sh"]
+# make sure start.sh is executable (if needed)
+RUN chmod +x /usr/src/app/start.sh || true
+
+# start the app using the included start script (which activates venv)
+CMD ["bash", "start.sh"]
