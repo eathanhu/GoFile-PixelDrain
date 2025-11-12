@@ -1,13 +1,12 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -e
 
-# Try to sync system time using chrony
-if command -v chronyd >/dev/null 2>&1; then
-  echo "⏱️  Syncing system time using chrony..."
-  chronyd -q 'server time.google.com iburst' || echo "⚠️  chrony sync failed (continuing anyway)"
+# attempt to sync time (non-fatal)
+if command -v ntpdate >/dev/null 2>&1; then
+  ntpdate -u pool.ntp.org || true
 else
-  echo "⚠️  chrony not available"
+  echo "ntpdate not installed; skipping time sync"
 fi
 
-# Start bot
+# start the app
 exec python main.py
