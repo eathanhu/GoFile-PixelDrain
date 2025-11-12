@@ -5,62 +5,76 @@ from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
 import handlers  # registers handlers on import
 # ------------------ TIME-OFFSET PATCH START ------------------
+# ---------------- TIME-OFFSET PATCH (multi-source) ----------------
 import time as _time
+import socket, struct
 
-def _apply_process_time_offset(print_log=True):
-    """Fetch UTC from worldtimeapi and apply a process-local offset to time.time()
-    if the host/container clock is off and the process cannot set system time.
-    This does NOT change the OS clock; it only adjusts Python's time.time() return.
-    """
+def _get_real_time():
+    """Try several time sources and return real UTC epoch seconds."""
+    # 1️⃣  Google Public NTP
+    try:
+        ntp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ntp.settimeout(3)
+        addr = ("time.google.com", 123)
+        msg = b"\x1b" + 47 * b"\0"
+        ntp.sendto(msg, addr)
+        data, _ = ntp.recvfrom(1024)
+        if data:
+            t = struct.unpack("!12I", data)[10]
+            t -= 2208988800  # convert NTP to Unix
+            return int(t)
+    except Exception:
+        pass
+    # 2️⃣  Cloudflare
+    try:
+        ntp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ntp.settimeout(3)
+        addr = ("time.cloudflare.com", 123)
+        msg = b"\x1b" + 47 * b"\0"
+        ntp.sendto(msg, addr)
+        data, _ = ntp.recvfrom(1024)
+        if data:
+            t = struct.unpack("!12I", data)[10]
+            t -= 2208988800
+            return int(t)
+    except Exception:
+        pass
+    # 3️⃣  WorldTimeAPI (HTTP)
     try:
         import requests as _requests
         from datetime import datetime as _dt
-    except Exception as e:
-        if print_log:
-            print(f"Time-offset: 'requests' not available, skipping time-sync: {e}")
-        return
-
-    try:
         r = _requests.get("https://worldtimeapi.org/api/timezone/Etc/UTC", timeout=5)
         r.raise_for_status()
         d = r.json()
         if isinstance(d.get("unixtime"), (int, float)):
-            real = int(d["unixtime"])
-        else:
-            dt_s = d.get("datetime")
-            if dt_s:
-                try:
-                    real = int(_dt.fromisoformat(dt_s.replace("Z", "+00:00")).timestamp())
-                except Exception:
-                    real = 0
-            else:
-                real = 0
-    except Exception as e:
-        if print_log:
-            print(f"Time-offset: worldtime fetch failed: {e}")
-        return
-
+            return int(d["unixtime"])
+        if isinstance(d.get("datetime"), str):
+            return int(_dt.fromisoformat(d["datetime"].replace("Z", "+00:00")).timestamp())
+    except Exception:
+        pass
+    # 4️⃣  Fallback: HTTP Date header
     try:
-        local = int(_time.time())
-        offset = real - local
-    except Exception as e:
-        if print_log:
-            print(f"Time-offset: failed to compute offset: {e}")
-        return
+        import requests as _requests, email.utils as eut
+        r = _requests.head("https://google.com", timeout=5)
+        dt = eut.parsedate_to_datetime(r.headers["Date"])
+        return int(dt.timestamp())
+    except Exception:
+        pass
+    return 0
 
-    # Apply only when offset is significant (>2s)
-    if abs(offset) > 2:
-        if print_log:
-            print(f"Time-offset: applying process offset {offset}s (real={real}, local={local})")
+try:
+    _real = _get_real_time()
+    _local = int(_time.time())
+    _OFFSET = _real - _local if _real else 0
+    if abs(_OFFSET) > 2:
+        print(f"🕒 Time offset { _OFFSET } s — applying local patch")
         _old_time = _time.time
-        _time.time = lambda: _old_time() + offset
+        _time.time = lambda: _old_time() + _OFFSET
     else:
-        if print_log:
-            print(f"Time-offset: offset small ({offset}s). No adjustment needed.")
-
-# Run the time-offset check now so it is in effect before creating the Pyrogram client
-_apply_process_time_offset()
-# ------------------ TIME-OFFSET PATCH END ------------------
+        print(f"🕒 Time offset small ({ _OFFSET } s), no adjustment needed")
+except Exception as e:
+    print(f"🕒 Time patch skipped: {e}")
+# ---------------- END PATCH ----------------
 
 
 # Telegram client
