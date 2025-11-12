@@ -1,13 +1,13 @@
 #!/bin/sh
 set -e
 
-# Try to sync system time (non-fatal)
-if command -v ntpdate >/dev/null 2>&1; then
-  echo "⏱️  Syncing system time with time.google.com..."
-  ntpdate -u time.google.com || echo "⚠️  ntpdate failed (continuing anyway)"
+# Try to sync system time using chrony
+if command -v chronyd >/dev/null 2>&1; then
+  echo "⏱️  Syncing system time using chrony..."
+  chronyd -q 'server time.google.com iburst' || echo "⚠️  chrony sync failed (continuing anyway)"
 else
-  echo "⚠️  ntpdate not available"
+  echo "⚠️  chrony not available"
 fi
 
-# Start the bot (replace python main.py if you use a module)
+# Start bot
 exec python main.py
