@@ -4,8 +4,7 @@ from aiohttp import web
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
 import handlers  # registers handlers on import
-# ------------------ TIME-OFFSET PATCH START ------------------
-# ---------------- TIME-OFFSET PATCH (multi-source) ----------------
+# ---------------- TIME-OFFSET PATCH (with forced forward drift) ----------------
 import time as _time
 import socket, struct
 
@@ -21,7 +20,7 @@ def _get_real_time():
         data, _ = ntp.recvfrom(1024)
         if data:
             t = struct.unpack("!12I", data)[10]
-            t -= 2208988800  # convert NTP to Unix
+            t -= 2208988800
             return int(t)
     except Exception:
         pass
@@ -39,20 +38,7 @@ def _get_real_time():
             return int(t)
     except Exception:
         pass
-    # 3️⃣  WorldTimeAPI (HTTP)
-    try:
-        import requests as _requests
-        from datetime import datetime as _dt
-        r = _requests.get("https://worldtimeapi.org/api/timezone/Etc/UTC", timeout=5)
-        r.raise_for_status()
-        d = r.json()
-        if isinstance(d.get("unixtime"), (int, float)):
-            return int(d["unixtime"])
-        if isinstance(d.get("datetime"), str):
-            return int(_dt.fromisoformat(d["datetime"].replace("Z", "+00:00")).timestamp())
-    except Exception:
-        pass
-    # 4️⃣  Fallback: HTTP Date header
+    # 3️⃣  Fallback: HTTP Date header
     try:
         import requests as _requests, email.utils as eut
         r = _requests.head("https://google.com", timeout=5)
@@ -66,15 +52,20 @@ try:
     _real = _get_real_time()
     _local = int(_time.time())
     _OFFSET = _real - _local if _real else 0
-    if abs(_OFFSET) > 2:
-        print(f"🕒 Time offset { _OFFSET } s — applying local patch")
-        _old_time = _time.time
-        _time.time = lambda: _old_time() + _OFFSET
-    else:
-        print(f"🕒 Time offset small ({ _OFFSET } s), no adjustment needed")
+
+    # Force at least +10s forward drift if offset is too small
+    if abs(_OFFSET) <= 2:
+        _OFFSET = 10
+        print(f"🕒 Time offset small, forcing +{_OFFSET}s forward drift (Render clock may be slow).")
+
+    print(f"🕒 Applying process time() offset: {_OFFSET}s (real={_real}, local={_local})")
+    _old_time = _time.time
+    _time.time = lambda: _old_time() + _OFFSET
+
 except Exception as e:
     print(f"🕒 Time patch skipped: {e}")
 # ---------------- END PATCH ----------------
+
 
 
 # Telegram client
