@@ -1,20 +1,13 @@
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1
+# Install extras for time sync
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tzdata ntpdate && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-COPY requirements.txt /app/requirements.txt
-
-# Install chrony for time sync, and ca-certificates for HTTPS
-RUN apt-get update \
- && apt-get install -y --no-install-recommends chrony ca-certificates \
- && pip install --no-cache-dir -r /app/requirements.txt \
- && rm -rf /var/lib/apt/lists/*
-
 COPY . /app
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
-CMD ["/app/start.sh"]
+# sync time once at container start, then run
+ENTRYPOINT ["/bin/bash", "-lc", "ntpdate -u pool.ntp.org || true; exec python main.py"]
