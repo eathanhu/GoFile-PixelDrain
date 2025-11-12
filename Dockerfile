@@ -1,25 +1,22 @@
-# Use the mirror-leech base image provided by the project author
-FROM anasty17/mltb:latest
+# Use a simple Python base or the project's preferred base
+FROM python:3.11-slim
 
-WORKDIR /usr/src/app
+ENV PYTHONUNBUFFERED=1
 
-# ensure directory permissions (the original file had this)
-RUN chmod 777 /usr/src/app || true
+WORKDIR /app
 
-# create and use venv (same approach as original)
-RUN python3 -m venv mltbenv
+# Copy requirements and install
+COPY requirements.txt /app/requirements.txt
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libffi-dev build-essential \
+ && pip install --no-cache-dir -r /app/requirements.txt \
+ && rm -rf /var/lib/apt/lists/*
 
-# copy only requirements first to use layer caching
-COPY requirements.txt /usr/src/app/requirements.txt
+# Copy the application
+COPY . /app
 
-# install required packages into venv
-RUN mltbenv/bin/pip install --no-cache-dir -r /usr/src/app/requirements.txt
+# Make start script executable if present
+RUN chmod +x /app/start.sh || true
 
-# copy the rest of the project
-COPY . /usr/src/app
-
-# make sure start.sh is executable (if needed)
-RUN chmod +x /usr/src/app/start.sh || true
-
-# start the app using the included start script (which activates venv)
+# Default start (Render will run this)
 CMD ["bash", "start.sh"]
