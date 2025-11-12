@@ -1,13 +1,21 @@
 FROM python:3.11-slim
 
-# Install extras for time sync
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends tzdata ntpdate && \
-    rm -rf /var/lib/apt/lists/*
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
-COPY . /app
-RUN pip install --no-cache-dir -r requirements.txt
 
-# sync time once at container start, then run
-ENTRYPOINT ["/bin/bash", "-lc", "ntpdate -u pool.ntp.org || true; exec python main.py"]
+COPY requirements.txt /app/requirements.txt
+
+# Install ntpdate for quick time sync and ca-certificates for HTTPS
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata ntpdate ca-certificates \
+ && pip install --no-cache-dir -r /app/requirements.txt \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY . /app
+
+# Ensure start.sh is executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+CMD ["/app/start.sh"]
