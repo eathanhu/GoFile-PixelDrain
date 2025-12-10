@@ -2,11 +2,13 @@ import os
 import asyncio
 from aiohttp import web
 from pyrogram import Client
-from config import API_ID, API_HASH, BOT_TOKEN
-import handlers  # registers handlers on import
+from bot.config import API_ID, API_HASH, BOT_TOKEN
+from bot import handlers  # registers handlers on import
+
 # ---------------- TIME-OFFSET PATCH (multi-source + forced forward) ----------------
 import time as _time
-import socket, struct
+import socket
+import struct
 
 def _get_real_time():
     """Try multiple sources to obtain current UTC unix time."""
@@ -21,6 +23,7 @@ def _get_real_time():
         if data:
             t = struct.unpack("!12I", data)[10]
             t -= 2208988800
+            ntp.close()
             return int(t)
     except Exception:
         pass
@@ -36,13 +39,15 @@ def _get_real_time():
         if data:
             t = struct.unpack("!12I", data)[10]
             t -= 2208988800
+            ntp.close()
             return int(t)
     except Exception:
         pass
 
     # 3) HTTP Date header fallback (robust, low-rate-limit risk)
     try:
-        import requests as _requests, email.utils as _eut
+        import requests as _requests
+        import email.utils as _eut
         r = _requests.head("https://google.com", timeout=5)
         if "Date" in r.headers:
             dt = _eut.parsedate_to_datetime(r.headers["Date"])
@@ -62,8 +67,9 @@ try:
     if abs(_OFFSET) <= 2:
         _OFFSET = 10
         print(f"🕒 Time offset small or unavailable; forcing +{_OFFSET}s forward drift (container may be slow).")
+    else:
+        print(f"🕒 Applying process time() offset: {_OFFSET}s (real={_real}, local={_local})")
 
-    print(f"🕒 Applying process time() offset: {_OFFSET}s (real={_real}, local={_local})")
     _old_time = _time.time
     _time.time = lambda: _old_time() + _OFFSET
 
@@ -89,12 +95,19 @@ async def run_http_server():
     print(f"✅ Health check listening on port {port}")
 
 async def main():
-    await asyncio.gather(
-        app.start(),
-        run_http_server()
-    )
-    print("🤖 Bot started and running...")
-    await app.idle()
+    try:
+        await asyncio.gather(
+            app.start(),
+            run_http_server()
+        )
+        print("🤖 Bot started and running...")
+        await app.idle()
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Error: {e}")
+    finally:
+        await app.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
