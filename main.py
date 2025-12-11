@@ -2,8 +2,8 @@ import os
 import asyncio
 from aiohttp import web
 from pyrogram import Client
-from bot.config import API_ID, API_HASH, BOT_TOKEN
-from bot import handlers  # registers handlers on import
+from config import API_ID, API_HASH, BOT_TOKEN
+import handlers  # registers handlers on import
 
 # ---------------- IMPROVED TIME-OFFSET PATCH ----------------
 import time as _time
@@ -11,7 +11,10 @@ import socket
 import struct
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 def _get_ntp_time(host: str, port: int = 123, timeout: int = 3) -> int:
@@ -83,7 +86,7 @@ def _apply_time_offset():
                 break
     
     local_time = int(_time.time())
-    offset = real_time - local_time if real_time > 0 else 0
+    offset = real_time - local_time if real_time else 0
     
     # Apply offset logic
     if real_time == 0:
@@ -93,7 +96,7 @@ def _apply_time_offset():
     elif abs(offset) <= 2:
         # Time difference too small or container clock slightly behind
         offset = 10
-        logger.info(f"🕒 Time difference small ({offset}s). Forcing +{offset}s offset as safety measure.")
+        logger.info(f"🕒 Time difference small. Forcing +{offset}s offset as safety measure.")
     else:
         # Significant time difference detected
         logger.info(f"🕒 Time offset detected: {offset}s (Source: {source})")
@@ -123,32 +126,62 @@ app = Client(
     sleep_threshold=60  # Handle FloodWait automatically up to 60s
 )
 
-# Health check endpoint for hosting platforms
+# Health check endpoint for Render
 async def health_check(request):
-    return web.Response(text="Bot is running fine!", status=200)
+    """Health check endpoint - CRITICAL for Render deployment."""
+    return web.Response(
+        text="OK - Bot is running",
+        status=200,
+        content_type="text/plain"
+    )
 
 async def run_http_server():
-    """Run HTTP server for health checks (required by some hosting platforms)."""
+    """Run HTTP server for health checks (required by Render)."""
     port = int(os.environ.get("PORT", 8080))
+    
     server = web.Application()
-    server.add_routes([web.get("/", health_check)])
+    server.add_routes([
+        web.get("/", health_check),
+        web.get("/health", health_check),
+        web.get("/ping", health_check),
+    ])
+    
     runner = web.AppRunner(server)
     await runner.setup()
+    
+    # IMPORTANT: Bind to 0.0.0.0 (not localhost) for Render
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"✅ Health check server running on port {port}")
+    
+    logger.info(f"✅ HTTP server started successfully")
+    logger.info(f"   Listening on: 0.0.0.0:{port}")
+    logger.info(f"   Health check ready at: /")
 
 async def main():
     """Main entry point."""
+    logger.info("=" * 50)
+    logger.info("Starting GoFile-PixelDrain Bot...")
+    logger.info("=" * 50)
+    
     try:
-        # Start bot and HTTP server concurrently
-        await asyncio.gather(
-            app.start(),
-            run_http_server()
-        )
+        # Start HTTP server first (so Render sees it immediately)
+        http_task = asyncio.create_task(run_http_server())
+        
+        # Give HTTP server a moment to start
+        await asyncio.sleep(1)
+        
+        # Start bot
+        logger.info("Starting Telegram client...")
+        await app.start()
+        
         logger.info("🤖 Bot started successfully!")
-        logger.info(f"   Bot username: @{app.me.username}")
+        logger.info(f"   Username: @{app.me.username}")
         logger.info(f"   Bot ID: {app.me.id}")
+        logger.info(f"   First name: {app.me.first_name}")
+        
+        logger.info("=" * 50)
+        logger.info("✅ ALL SERVICES RUNNING")
+        logger.info("=" * 50)
         
         # Keep the bot running
         await app.idle()
@@ -157,6 +190,7 @@ async def main():
         logger.info("🛑 Bot stopped by user (Ctrl+C)")
     except Exception as e:
         logger.error(f"❌ Critical error: {e}", exc_info=True)
+        raise
     finally:
         try:
             await app.stop()
@@ -169,3 +203,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 Shutdown complete")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        exit(1)
