@@ -5,7 +5,7 @@ from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
 import handlers  # registers handlers on import
 
-# ---------------- IMPROVED TIME-OFFSET PATCH ----------------
+# ---------------- CRITICAL TIME-SYNC FIX ----------------
 import time as _time
 import socket
 import struct
@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def _get_ntp_time(host: str, port: int = 123, timeout: int = 3) -> int:
+def _get_ntp_time(host: str, port: int = 123, timeout: int = 5) -> int:
     """Get time from NTP server."""
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -54,12 +54,12 @@ def _get_http_time(url: str, timeout: int = 5) -> int:
     return 0
 
 def _apply_time_offset():
-    """Apply time offset to fix Telegram FloodWait and time sync issues."""
+    """Apply time offset to fix Telegram msg_id sync issues."""
     ntp_sources = [
         "time.google.com",
         "time.cloudflare.com",
+        "time.nist.gov",
         "pool.ntp.org",
-        "time.windows.com",
     ]
     
     http_sources = [
@@ -70,60 +70,82 @@ def _apply_time_offset():
     real_time = 0
     source = "unknown"
     
-    # Try NTP servers first (more accurate)
+    # Try NTP servers first (most accurate)
+    logger.info("🕒 Attempting to sync time with NTP servers...")
     for ntp_host in ntp_sources:
-        real_time = _get_ntp_time(ntp_host)
+        logger.info(f"   Trying {ntp_host}...")
+        real_time = _get_ntp_time(ntp_host, timeout=8)
         if real_time > 0:
             source = f"NTP ({ntp_host})"
+            logger.info(f"   ✅ Success!")
             break
     
     # Fallback to HTTP if NTP fails
     if real_time == 0:
+        logger.warning("⚠️  NTP failed, trying HTTP fallback...")
         for http_url in http_sources:
-            real_time = _get_http_time(http_url)
+            logger.info(f"   Trying {http_url}...")
+            real_time = _get_http_time(http_url, timeout=8)
             if real_time > 0:
                 source = f"HTTP ({http_url})"
+                logger.info(f"   ✅ Success!")
                 break
     
     local_time = int(_time.time())
     offset = real_time - local_time if real_time else 0
     
-    # Apply offset logic
+    # Apply offset logic - CRITICAL for Render's clock issues
     if real_time == 0:
-        # Failed to get real time - force forward offset
-        offset = 15
-        logger.warning(f"⚠️  Could not fetch real time. Forcing +{offset}s offset to prevent time sync issues.")
-    elif abs(offset) <= 2:
-        # Time difference too small or container clock slightly behind
-        offset = 10
-        logger.info(f"🕒 Time difference small. Forcing +{offset}s offset as safety measure.")
+        # Failed to get real time - force significant forward offset
+        offset = 30  # Increased from 15 to 30 for safety
+        logger.warning(f"⚠️  Could not sync with any time source!")
+        logger.warning(f"⚠️  Forcing +{offset}s offset to prevent msg_id errors")
+    elif abs(offset) <= 5:
+        # Time difference too small - Render containers often lag by a few seconds
+        offset = 25  # Force forward offset for safety
+        logger.info(f"🕒 Time difference: {offset}s (small)")
+        logger.info(f"🕒 Forcing +25s offset as safety buffer for Render")
     else:
-        # Significant time difference detected
-        logger.info(f"🕒 Time offset detected: {offset}s (Source: {source})")
-        logger.info(f"   Real time: {real_time} | Local time: {local_time}")
+        # Significant time difference detected - use calculated offset
+        # But add extra buffer if behind
+        if offset < 0:
+            offset = abs(offset) + 15  # Add 15s buffer if clock is behind
+            logger.info(f"🕒 Clock is BEHIND by {abs(offset - 15)}s")
+            logger.info(f"🕒 Applying {offset}s offset (with +15s safety buffer)")
+        else:
+            logger.info(f"🕒 Clock is AHEAD by {offset}s")
+            logger.info(f"🕒 Applying {offset}s offset")
+        logger.info(f"   Source: {source}")
+        logger.info(f"   Real time: {real_time}")
+        logger.info(f"   Local time: {local_time}")
     
-    # Monkey-patch time.time()
+    # Monkey-patch time.time() to fix msg_id generation
     _original_time = _time.time
     _time.time = lambda: _original_time() + offset
     
     logger.info(f"✅ Time offset applied: +{offset}s")
+    logger.info(f"   New time: {int(_time.time())}")
     return offset
 
-# Apply the time patch before starting the bot
+# CRITICAL: Apply time patch BEFORE creating Pyrogram client
 try:
     _applied_offset = _apply_time_offset()
 except Exception as e:
     logger.error(f"❌ Time patch failed: {e}")
-    logger.warning("⚠️  Bot may experience FloodWait issues if system time is incorrect.")
+    logger.warning("⚠️  Forcing default +30s offset as last resort")
+    _original_time = _time.time
+    _time.time = lambda: _original_time() + 30
 # ---------------- END TIME PATCH ----------------
 
-# Telegram client
+# Telegram client - MUST be created AFTER time patch
+logger.info("Creating Pyrogram client...")
 app = Client(
     "gofile_pixeldrain_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    sleep_threshold=60  # Handle FloodWait automatically up to 60s
+    sleep_threshold=60,  # Handle FloodWait automatically
+    workdir="."  # Store session in current directory
 )
 
 # Health check endpoint for Render
@@ -149,39 +171,42 @@ async def run_http_server():
     runner = web.AppRunner(server)
     await runner.setup()
     
-    # IMPORTANT: Bind to 0.0.0.0 (not localhost) for Render
+    # IMPORTANT: Bind to 0.0.0.0 for Render
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     
     logger.info(f"✅ HTTP server started successfully")
     logger.info(f"   Listening on: 0.0.0.0:{port}")
-    logger.info(f"   Health check ready at: /")
+    logger.info(f"   Health check: /")
 
 async def main():
     """Main entry point."""
-    logger.info("=" * 50)
-    logger.info("Starting GoFile-PixelDrain Bot...")
-    logger.info("=" * 50)
+    logger.info("=" * 60)
+    logger.info("🚀 Starting GoFile-PixelDrain Bot on Render")
+    logger.info("=" * 60)
     
     try:
-        # Start HTTP server first (so Render sees it immediately)
+        # Start HTTP server FIRST so Render sees it immediately
+        logger.info("Starting HTTP health check server...")
         http_task = asyncio.create_task(run_http_server())
         
-        # Give HTTP server a moment to start
-        await asyncio.sleep(1)
+        # Give HTTP server time to bind to port
+        await asyncio.sleep(2)
         
-        # Start bot
+        # Now start the Telegram bot
         logger.info("Starting Telegram client...")
+        logger.info(f"   Current time: {int(_time.time())}")
+        
         await app.start()
         
+        logger.info("=" * 60)
         logger.info("🤖 Bot started successfully!")
         logger.info(f"   Username: @{app.me.username}")
         logger.info(f"   Bot ID: {app.me.id}")
         logger.info(f"   First name: {app.me.first_name}")
-        
-        logger.info("=" * 50)
-        logger.info("✅ ALL SERVICES RUNNING")
-        logger.info("=" * 50)
+        logger.info("=" * 60)
+        logger.info("✅ ALL SERVICES RUNNING - Bot is ready!")
+        logger.info("=" * 60)
         
         # Keep the bot running
         await app.idle()
@@ -195,8 +220,8 @@ async def main():
         try:
             await app.stop()
             logger.info("👋 Bot stopped gracefully")
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
 if __name__ == "__main__":
     try:
