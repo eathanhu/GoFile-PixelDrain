@@ -5,10 +5,10 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiohttp
 
-from bot.db import get_user, set_user_token
-from bot.utils import human_readable_size, progress_bar
-from bot.gofile import upload_file as gofile_upload
-from bot.pixeldrain import upload_file as pixeldrain_upload
+from db import get_user, set_user_token
+from utils import human_readable_size, progress_bar
+from gofile import upload_file as gofile_upload
+from pixeldrain import upload_file as pixeldrain_upload
 
 pending_set = {}
 
