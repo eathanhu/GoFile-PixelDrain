@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def _get_ntp_time(host: str, port: int = 123, timeout: int = 5) -> int:
+def _get_ntp_time(host: str, port: int = 123, timeout: int = 10) -> int:
     """Get time from NTP server."""
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -39,7 +39,7 @@ def _get_ntp_time(host: str, port: int = 123, timeout: int = 5) -> int:
         logger.debug(f"NTP {host} failed: {e}")
     return 0
 
-def _get_http_time(url: str, timeout: int = 5) -> int:
+def _get_http_time(url: str, timeout: int = 10) -> int:
     """Get time from HTTP Date header."""
     try:
         import requests
