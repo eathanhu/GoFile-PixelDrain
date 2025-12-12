@@ -2,37 +2,10 @@ import os
 import asyncio
 from aiohttp import web
 from pyrogram import Client
+from pyrogram.raw.functions import Ping
 from config import API_ID, API_HASH, BOT_TOKEN
 import handlers  # registers handlers on import
-
-# ---------------- CRITICAL TIME-SYNC FIX ----------------
-import time as _time
-import socket
-import struct
 import logging
-
-import logging
-from pyrogram.errors import RPCError
-
-async def safe_delete(client, chat_id, msg_id, **kwargs):
-    """Delete message safely; returns True if deleted else None."""
-    if not valid_msg_id(msg_id):
-        logger.warning("safe_delete: invalid msg id %r, skipping", msg_id)
-        return None
-    try:
-        await client.delete_messages(chat_id, msg_id, **kwargs)
-        return True
-    except RPCError as e:
-        txt = str(e)
-        if "MSG_ID_TOO_LOW" in txt or "MessageIdInvalid" in txt or "Message to delete not found" in txt:
-            logger.warning("safe_delete: msg id too low/invalid or already deleted: %s:%s", chat_id, msg_id)
-            return None
-        logger.exception("safe_delete: unexpected RPCError")
-        raise
-    except Exception:
-        logger.exception("safe_delete: unexpected error")
-        raise
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,135 +13,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def _get_ntp_time(host: str, port: int = 123, timeout: int = 10) -> int:
-    """Get time from NTP server."""
-    try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.settimeout(timeout)
-        
-        # NTP request packet (version 3, client mode)
-        ntp_packet = b'\x1b' + 47 * b'\x00'
-        client.sendto(ntp_packet, (host, port))
-        
-        data, _ = client.recvfrom(1024)
-        if len(data) >= 48:
-            # Extract transmit timestamp (bytes 40-43)
-            timestamp = struct.unpack('!12I', data)[10]
-            # Convert from NTP epoch (1900) to Unix epoch (1970)
-            unix_time = timestamp - 2208988800
-            client.close()
-            return int(unix_time)
-    except Exception as e:
-        logger.debug(f"NTP {host} failed: {e}")
-    return 0
-
-def _get_http_time(url: str, timeout: int = 10) -> int:
-    """Get time from HTTP Date header."""
-    try:
-        import requests
-        import email.utils as eut
-        
-        response = requests.head(url, timeout=timeout, allow_redirects=True)
-        if "Date" in response.headers:
-            date_tuple = eut.parsedate_to_datetime(response.headers["Date"])
-            return int(date_tuple.timestamp())
-    except Exception as e:
-        logger.debug(f"HTTP time from {url} failed: {e}")
-    return 0
-
-def _apply_time_offset():
-    """Apply time offset to fix Telegram msg_id sync issues."""
-    ntp_sources = [
-        "time.google.com",
-        "time.cloudflare.com",
-        "time.nist.gov",
-        "pool.ntp.org",
-    ]
-    
-    http_sources = [
-        "https://www.google.com",
-        "https://www.cloudflare.com",
-    ]
-    
-    real_time = 0
-    source = "unknown"
-    
-    # Try NTP servers first (most accurate)
-    logger.info("🕒 Attempting to sync time with NTP servers...")
-    for ntp_host in ntp_sources:
-        logger.info(f"   Trying {ntp_host}...")
-        real_time = _get_ntp_time(ntp_host, timeout=8)
-        if real_time > 0:
-            source = f"NTP ({ntp_host})"
-            logger.info(f"   ✅ Success!")
-            break
-    
-    # Fallback to HTTP if NTP fails
-    if real_time == 0:
-        logger.warning("⚠️  NTP failed, trying HTTP fallback...")
-        for http_url in http_sources:
-            logger.info(f"   Trying {http_url}...")
-            real_time = _get_http_time(http_url, timeout=8)
-            if real_time > 0:
-                source = f"HTTP ({http_url})"
-                logger.info(f"   ✅ Success!")
-                break
-    
-    local_time = int(_time.time())
-    offset = real_time - local_time if real_time else 0
-    
-    # Apply offset logic - CRITICAL for Render's clock issues
-    if real_time == 0:
-        # Failed to get real time - force significant forward offset
-        offset = 30  # Increased from 15 to 30 for safety
-        logger.warning(f"⚠️  Could not sync with any time source!")
-        logger.warning(f"⚠️  Forcing +{offset}s offset to prevent msg_id errors")
-    elif abs(offset) <= 5:
-        # Time difference too small - Render containers often lag by a few seconds
-        offset = 25  # Force forward offset for safety
-        logger.info(f"🕒 Time difference: {offset}s (small)")
-        logger.info(f"🕒 Forcing +25s offset as safety buffer for Render")
-    else:
-        # Significant time difference detected - use calculated offset
-        # But add extra buffer if behind
-        if offset < 0:
-            offset = abs(offset) + 15  # Add 15s buffer if clock is behind
-            logger.info(f"🕒 Clock is BEHIND by {abs(offset - 15)}s")
-            logger.info(f"🕒 Applying {offset}s offset (with +15s safety buffer)")
-        else:
-            logger.info(f"🕒 Clock is AHEAD by {offset}s")
-            logger.info(f"🕒 Applying {offset}s offset")
-        logger.info(f"   Source: {source}")
-        logger.info(f"   Real time: {real_time}")
-        logger.info(f"   Local time: {local_time}")
-    
-    # Monkey-patch time.time() to fix msg_id generation
-    _original_time = _time.time
-    _time.time = lambda: _original_time() + offset
-    
-    logger.info(f"✅ Time offset applied: +{offset}s")
-    logger.info(f"   New time: {int(_time.time())}")
-    return offset
-
-# CRITICAL: Apply time patch BEFORE creating Pyrogram client
-try:
-    _applied_offset = _apply_time_offset()
-except Exception as e:
-    logger.error(f"❌ Time patch failed: {e}")
-    logger.warning("⚠️  Forcing default +30s offset as last resort")
-    _original_time = _time.time
-    _time.time = lambda: _original_time() + 30
-# ---------------- END TIME PATCH ----------------
-
-# Telegram client - MUST be created AFTER time patch
+# Telegram client with proper configuration
 logger.info("Creating Pyrogram client...")
 app = Client(
     "gofile_pixeldrain_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    sleep_threshold=60,  # Handle FloodWait automatically
-    workdir="."  # Store session in current directory
+    sleep_threshold=60,  # Automatically handle FloodWait up to 60s
+    workdir=".",  # Store session in current directory
+    in_memory=False  # Use persistent session file
 )
 
 # Health check endpoint for Render
@@ -202,6 +56,18 @@ async def run_http_server():
     logger.info(f"   Listening on: 0.0.0.0:{port}")
     logger.info(f"   Health check: /")
 
+async def test_connection():
+    """Test Telegram connection using invoke() method with sleep_threshold."""
+    try:
+        logger.info("Testing Telegram connection...")
+        # Use invoke() method with sleep_threshold like in the solution
+        result = await app.invoke(Ping(ping_id=0), sleep_threshold=60)
+        logger.info("✅ Telegram connection test successful!")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Telegram connection test failed: {e}")
+        return False
+
 async def main():
     """Main entry point."""
     logger.info("=" * 60)
@@ -218,9 +84,10 @@ async def main():
         
         # Now start the Telegram bot
         logger.info("Starting Telegram client...")
-        logger.info(f"   Current time: {int(_time.time())}")
-        
         await app.start()
+        
+        # Test connection using invoke() method
+        await test_connection()
         
         logger.info("=" * 60)
         logger.info("🤖 Bot started successfully!")
